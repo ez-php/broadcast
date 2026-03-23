@@ -34,10 +34,11 @@ final class BroadcastServiceProvider extends ServiceProvider
             BroadcastDriverInterface::class,
             function (ContainerInterface $app): BroadcastDriverInterface {
                 $config = $app->make(ConfigInterface::class);
-                $driver = (string) $config->get('broadcast.driver', 'null');
+                $raw    = $config->get('broadcast.driver', 'null');
+                $driver = is_string($raw) ? $raw : 'null';
 
                 return match ($driver) {
-                    'log' => new LogDriver((string) $config->get('broadcast.log_path', '')),
+                    'log' => new LogDriver($this->resolveLogPath($config)),
                     'array' => new ArrayDriver(),
                     default => new NullDriver(),
                 };
@@ -50,6 +51,20 @@ final class BroadcastServiceProvider extends ServiceProvider
                 return new Broadcaster($app->make(BroadcastDriverInterface::class));
             }
         );
+    }
+
+    /**
+     * Resolve the log path from config, falling back to empty string.
+     *
+     * @param ConfigInterface $config
+     *
+     * @return string
+     */
+    private function resolveLogPath(ConfigInterface $config): string
+    {
+        $path = $config->get('broadcast.log_path', '');
+
+        return is_string($path) ? $path : '';
     }
 
     /**
