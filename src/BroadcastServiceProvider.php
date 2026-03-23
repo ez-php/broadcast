@@ -34,7 +34,7 @@ final class BroadcastServiceProvider extends ServiceProvider
             BroadcastDriverInterface::class,
             function (ContainerInterface $app): BroadcastDriverInterface {
                 $config = $app->make(ConfigInterface::class);
-                $raw    = $config->get('broadcast.driver', 'null');
+                $raw = $config->get('broadcast.driver', 'null');
                 $driver = is_string($raw) ? $raw : 'null';
 
                 return match ($driver) {
