@@ -225,6 +225,62 @@ $app->bind(BroadcastDriverInterface::class, fn () => new RedisPubSubDriver($redi
 
 ---
 
+## Client-Side Usage (JavaScript)
+
+The browser's built-in `EventSource` API consumes SSE streams with no extra library required.
+
+### Basic subscription
+
+```javascript
+const events = new EventSource('/events/notifications');
+
+// Listen for a named event (matches the `event:` field in the SSE frame)
+events.addEventListener('UserCreated', (e) => {
+    const payload = JSON.parse(e.data);
+    console.log('New user:', payload.id, payload.name);
+});
+
+// Listen for unnamed messages (only `data:` field, no `event:` field)
+events.onmessage = (e) => {
+    console.log('Message:', e.data);
+};
+
+// Handle connection errors and reconnection
+events.onerror = (err) => {
+    console.error('SSE error', err);
+    // EventSource reconnects automatically after the `retry:` interval (default 3 s)
+};
+
+// Close the stream when no longer needed
+// events.close();
+```
+
+### Authenticated streams
+
+SSE uses standard HTTP — pass credentials via a cookie or a query-parameter token (headers are not configurable in the browser `EventSource` API):
+
+```javascript
+const token = document.querySelector('meta[name="api-token"]').content;
+const events = new EventSource(`/events/notifications?token=${token}`);
+```
+
+On the PHP side, validate `$_GET['token']` in the SSE controller before opening the stream.
+
+### Multiple event types on one connection
+
+```javascript
+const events = new EventSource('/events/feed');
+
+['OrderPlaced', 'OrderShipped', 'OrderDelivered'].forEach((type) => {
+    events.addEventListener(type, (e) => {
+        const order = JSON.parse(e.data);
+        updateOrderUI(order);
+    });
+});
+```
+
+---
+
 ## Exceptions
 
 `BroadcastException` (extends `RuntimeException`) is the base exception for this package. `Broadcast::event()` / `Broadcast::to()` throw `RuntimeException` if called before the broadcaster is set.
