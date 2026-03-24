@@ -1,6 +1,6 @@
 {
   "name": "ez-php/broadcast",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "description": "Real-time event broadcasting for ez-php — pluggable drivers (Null, Log, Array), SSE response helpers, and a static Broadcast facade",
   "type": "library",
   "license": "MIT",
