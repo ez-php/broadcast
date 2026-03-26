@@ -42,7 +42,7 @@ final class BroadcastServiceProvider extends ServiceProvider
                 $driver = is_string($raw) ? $raw : 'null';
 
                 return match ($driver) {
-                    'log'   => new LogDriver($this->resolveLogPath($config)),
+                    'log' => new LogDriver($this->resolveLogPath($config)),
                     'array' => new ArrayDriver(),
                     'redis' => $this->createRedisDriver($config),
                     default => new NullDriver(),
@@ -83,7 +83,7 @@ final class BroadcastServiceProvider extends ServiceProvider
     {
         $host = $config->get('broadcast.redis.host', '127.0.0.1');
         $port = $config->get('broadcast.redis.port', 6379);
-        $db   = $config->get('broadcast.redis.database', 0);
+        $db = $config->get('broadcast.redis.database', 0);
 
         return new RedisDriver(
             host: is_string($host) ? $host : '127.0.0.1',
