@@ -173,7 +173,8 @@ src/
 └── Driver/
 │   ├── NullDriver.php              — silent discard (default)
 │   ├── LogDriver.php               — writes to a log file or error_log() when path is empty
-│   └── ArrayDriver.php             — stores events in-memory; designed for testing
+│   ├── ArrayDriver.php             — stores events in-memory; designed for testing
+│   └── RedisDriver.php             — publishes to Redis Pub/Sub channels via ext-redis
 └── Sse/
     ├── SseEvent.php                — single SSE frame: data, event name, id, retry + toString()
     └── SseStream.php               — iterable stream of SseEvents; getHeaders() + stream(Closure)
@@ -189,7 +190,8 @@ tests/
 └── Driver/
     ├── NullDriverTest.php      — covers NullDriver: no exception, no output
     ├── LogDriverTest.php       — covers LogDriver: file write, append, directory creation, error_log fallback
-    └── ArrayDriverTest.php     — covers ArrayDriver: publish, eventsOn, isolation, reset
+    ├── ArrayDriverTest.php     — covers ArrayDriver: publish, eventsOn, isolation, reset
+    └── RedisDriverTest.php     — covers RedisDriver: publish, multi-channel; requires live Redis (#[Group('redis')])
 ```
 
 ---
@@ -247,6 +249,7 @@ Reads `broadcast.driver` from `ConfigInterface`:
 |-------|---------------------|
 | `'log'` | `LogDriver($config->get('broadcast.log_path', ''))` |
 | `'array'` | `ArrayDriver()` |
+| `'redis'` | `RedisDriver(host, port, database)` from `broadcast.redis.*` config |
 | default | `NullDriver()` |
 
 `register()` binds `BroadcastDriverInterface` and `Broadcaster` lazily. `boot()` eagerly resolves `Broadcaster` and calls `Broadcast::setBroadcaster()`.
@@ -256,6 +259,17 @@ Reads `broadcast.driver` from `ConfigInterface`:
 ### NullDriver (`src/Driver/NullDriver.php`)
 
 All calls to `publish()` are no-ops. Default driver when `broadcast.driver` is unset or unknown.
+
+---
+
+### RedisDriver (`src/Driver/RedisDriver.php`)
+
+Publishes events to Redis Pub/Sub channels via the PHP `ext-redis` extension. Throws `RuntimeException` at construction if the extension is not loaded.
+
+- Each `publish()` call JSON-encodes `{'event': <name>, 'payload': <data>}` and calls `Redis::publish(channel, message)`
+- Subscribers must be running separately (SSE proxy, WebSocket gateway, etc.) — Redis Pub/Sub is fire-and-forget
+- Non-zero database selected via `Redis::select()` on construction
+- Config keys: `broadcast.redis.host`, `broadcast.redis.port`, `broadcast.redis.database`
 
 ---
 
@@ -304,7 +318,7 @@ Decouples iteration from actual output — the controller decides how to flush/e
 - **`Broadcast` facade with fail-fast** — Throws `RuntimeException` if called before `setBroadcaster()`. Silent discards are worse than loud failures in development. `NullDriver` (the default) handles intentional silence.
 - **`ArrayDriver` for testing** — Avoids the need for a mock framework. Tests inject a real `ArrayDriver` and read `eventsOn()`. Mocking `BroadcastDriverInterface` would lose the ability to verify ordering and payload structure.
 - **`SseStream::stream()` accepts `\Closure`, not `callable`** — PHPStan level 9 can enforce the callable signature `\Closure(string): void` on a typed `\Closure` parameter. Plain `callable` loses the parameter type.
-- **No WebSocket or Redis Pub/Sub in this version** — SSE is the first-class streaming mechanism. Redis Pub/Sub is a valid future driver (`RedisPubSubDriver`) — implement via `BroadcastDriverInterface`. WebSocket support requires a long-running process (Ratchet, Swoole) which is out of scope for a vanilla PHP module.
+- **Redis Pub/Sub driver** — `RedisDriver` uses `ext-redis` and `Redis::publish()` to push events to Pub/Sub channels. Subscribers (SSE proxy, WebSocket gateway) must be running separately; Redis Pub/Sub is fire-and-forget with no persistence. WebSocket support still requires a long-running process (Ratchet, Swoole) which is out of scope.
 - **No SSE retry/reconnection logic** — `SseEvent` supports the `retry` field in the frame format. Actual reconnection handling is client-side (the browser EventSource API handles it automatically).
 - **Test namespace isolation** — Top-level broadcast tests use `namespace Tests`. Driver tests use `namespace Tests\Broadcast\Driver` to avoid collision with `Tests\Driver\LogDriverTest` in `ez-php/mail`. PHPUnit discovers tests by directory scan, so namespace/directory mismatches are allowed.
 - **`BroadcastServiceProvider` 50% method coverage** — Both `register()` and `boot()` are exercised by `BroadcastServiceProviderTest`. The 50% figure is a PCOV attribution artefact: `boot()` calls `Broadcast::setBroadcaster()` which is in another class; the line executing inside `boot()` is attributed to the callee. This is expected and acceptable.
@@ -326,7 +340,7 @@ Decouples iteration from actual output — the controller decides how to flush/e
 | Concern | Where it belongs |
 |---------|-----------------|
 | WebSocket support (Ratchet, Swoole) | A future `ez-php/websocket` module or application layer |
-| Redis Pub/Sub driver | A future `RedisBroadcastDriver` in this module's `Driver/` |
+| Persistent message queuing | `ez-php/queue` — Redis Pub/Sub (this module) is fire-and-forget |
 | Domain event dispatching (in-process) | `ez-php/events` |
 | Queue-backed async broadcast | Application layer: push a job that calls `Broadcast::event()` |
 | Channel authentication / presence channels | Application-level middleware or a future `ChannelAuth` addition |
