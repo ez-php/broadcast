@@ -1,6 +1,6 @@
 # ez-php/broadcast
 
-Real-time event broadcasting for ez-php applications. Publish events to named channels via a pluggable driver (Null, Log, Array) and stream them to connected clients using Server-Sent Events (SSE).
+Real-time event broadcasting for ez-php applications. Publish events to named channels via a pluggable driver (Null, Log, Array, Redis) and stream them to connected clients using Server-Sent Events (SSE).
 
 ---
 
@@ -84,6 +84,7 @@ Broadcast::event(new UserCreated(42));
 | Null   | `null`            | Silently discards all events (default) |
 | Log    | `log`             | Writes a summary to a log file or via `error_log()` |
 | Array  | `array`           | Stores events in memory — designed for testing |
+| Redis  | `redis`           | Publishes to Redis Pub/Sub channels via `ext-redis` |
 
 ### Log Driver
 
@@ -93,6 +94,17 @@ BROADCAST_LOG_PATH=/var/www/html/storage/logs/broadcast.log
 ```
 
 When `BROADCAST_LOG_PATH` is empty, events are written via `error_log()`.
+
+### Redis Driver
+
+```dotenv
+BROADCAST_DRIVER=redis
+BROADCAST_REDIS_HOST=redis
+BROADCAST_REDIS_PORT=6379
+BROADCAST_REDIS_DATABASE=0
+```
+
+Publishes events to Redis Pub/Sub channels via PHP's `ext-redis` extension. Subscribers (SSE proxy, WebSocket gateway) must be running separately — Redis Pub/Sub is fire-and-forget.
 
 ### Array Driver (for Testing)
 
@@ -142,6 +154,20 @@ echo $frame->toString();
 ```
 
 Multi-line data is handled automatically — each newline in `$data` produces a separate `data:` line.
+
+### SseResponse
+
+Convenience wrapper that combines `SseStream` with HTTP header output and per-frame flushing:
+
+```php
+use EzPhp\Broadcast\Sse\SseResponse;
+
+$response = new SseResponse($this->generateEvents());
+$response->emit(); // sends headers and streams all events
+exit;
+```
+
+`emit()` calls `header()` for each SSE header, then streams events via `SseStream::stream()` — each frame is echoed and `ob_flush()` + `flush()` are called immediately so clients receive events as they arrive.
 
 ### SseStream
 
