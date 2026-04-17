@@ -177,7 +177,8 @@ src/
 │   └── RedisDriver.php             — publishes to Redis Pub/Sub channels via ext-redis
 └── Sse/
     ├── SseEvent.php                — single SSE frame: data, event name, id, retry + toString()
-    └── SseStream.php               — iterable stream of SseEvents; getHeaders() + stream(Closure)
+    ├── SseStream.php               — iterable stream of SseEvents; getHeaders() + stream(Closure)
+    └── SseResponse.php             — convenience wrapper: sends headers + streams events via emit()
 
 tests/
 ├── TestCase.php                — base PHPUnit test case
@@ -187,6 +188,7 @@ tests/
 ├── BroadcastServiceProviderTest.php — covers BroadcastServiceProvider: bindings, default driver, facade wiring
 ├── SseEventTest.php            — covers SseEvent: getters, toString formatting, all fields, multi-line data
 ├── SseStreamTest.php           — covers SseStream: getHeaders(), stream() with arrays and generators
+├── SseResponseTest.php         — covers SseResponse: getHeaders(), emit() output, order, generator iterable
 └── Driver/
     ├── NullDriverTest.php      — covers NullDriver: no exception, no output
     ├── LogDriverTest.php       — covers LogDriver: file write, append, directory creation, error_log fallback
@@ -309,6 +311,20 @@ Wraps an `iterable<SseEvent>` (array or generator). Provides:
 - `stream(\Closure(string): void $send)` — iterates events and passes each `toString()` to the sink
 
 Decouples iteration from actual output — the controller decides how to flush/emit.
+
+---
+
+### SseResponse (`src/Sse/SseResponse.php`)
+
+Convenience wrapper that combines `SseStream` with HTTP header output and per-frame output buffer flushing:
+
+```php
+$response = new SseResponse($this->eventGenerator());
+$response->emit();
+exit;
+```
+
+`emit()` calls `header()` for each SSE header, then streams events via `SseStream::stream()` — each frame is echoed and `ob_flush()` + `flush()` are called immediately so clients receive events as they are produced rather than after the response body is complete.
 
 ---
 
