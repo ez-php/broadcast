@@ -215,7 +215,7 @@ When adding a new module, add `"$ROOT/modules/<name>"` to the `PACKAGES` array i
 
 # Package: ez-php/broadcast
 
-Real-time event broadcasting for ez-php applications — pluggable publish drivers (Null, Log, Array), SSE frame formatting, a streaming response helper, a `Broadcast` static facade, and a `BroadcastServiceProvider` for framework integration.
+Real-time event broadcasting for ez-php applications — pluggable publish drivers (Null, Log, Array, Redis), a `Broadcast` static facade, and a `BroadcastServiceProvider` for framework integration.
 
 ---
 
@@ -230,14 +230,10 @@ src/
 ├── Broadcast.php                   — static facade backed by a managed Broadcaster singleton
 ├── BroadcastServiceProvider.php    — binds driver + Broadcaster; wires Broadcast facade in boot()
 └── Driver/
-│   ├── NullDriver.php              — silent discard (default)
-│   ├── LogDriver.php               — writes to a log file or error_log() when path is empty
-│   ├── ArrayDriver.php             — stores events in-memory; designed for testing
-│   └── RedisDriver.php             — publishes to Redis Pub/Sub channels via ext-redis
-└── Sse/
-    ├── SseEvent.php                — single SSE frame: data, event name, id, retry + toString()
-    ├── SseStream.php               — iterable stream of SseEvents; getHeaders() + stream(Closure)
-    └── SseResponse.php             — convenience wrapper: sends headers + streams events via emit()
+    ├── NullDriver.php              — silent discard (default)
+    ├── LogDriver.php               — writes to a log file or error_log() when path is empty
+    ├── ArrayDriver.php             — stores events in-memory; designed for testing
+    └── RedisDriver.php             — publishes to Redis Pub/Sub channels via ext-redis
 
 tests/
 ├── TestCase.php                — base PHPUnit test case
@@ -245,9 +241,6 @@ tests/
 ├── BroadcasterTest.php         — covers Broadcaster: event(), to(), driver delegation
 ├── BroadcastTest.php           — covers Broadcast facade: set, reset, event, to, uninitialized throw
 ├── BroadcastServiceProviderTest.php — covers BroadcastServiceProvider: bindings, default driver, facade wiring
-├── SseEventTest.php            — covers SseEvent: getters, toString formatting, all fields, multi-line data
-├── SseStreamTest.php           — covers SseStream: getHeaders(), stream() with arrays and generators
-├── SseResponseTest.php         — covers SseResponse: getHeaders(), emit() output, order, generator iterable
 └── Driver/
     ├── NullDriverTest.php      — covers NullDriver: no exception, no output
     ├── LogDriverTest.php       — covers LogDriver: file write, append, directory creation, error_log fallback
@@ -346,44 +339,9 @@ Stores events in `array<string, list<array{event, payload}>>`, grouped by channe
 
 ---
 
-### SseEvent (`src/Sse/SseEvent.php`)
+### Server-Sent Events
 
-Pure value object for a single SSE frame. `toString()` produces the wire format per RFC 8895:
-
-```
-[id: <id>\n]
-[event: <event>\n]
-[retry: <retry>\n]
-data: <line1>\n
-[data: <line2>\n]
-\n
-```
-
-Multi-line data is handled automatically. `id`, `event`, and `retry` fields are omitted when empty/zero.
-
----
-
-### SseStream (`src/Sse/SseStream.php`)
-
-Wraps an `iterable<SseEvent>` (array or generator). Provides:
-- `getHeaders(): array<string, string>` — the four SSE response headers
-- `stream(\Closure(string): void $send)` — iterates events and passes each `toString()` to the sink
-
-Decouples iteration from actual output — the controller decides how to flush/emit.
-
----
-
-### SseResponse (`src/Sse/SseResponse.php`)
-
-Convenience wrapper that combines `SseStream` with HTTP header output and per-frame output buffer flushing:
-
-```php
-$response = new SseResponse($this->eventGenerator());
-$response->emit();
-exit;
-```
-
-`emit()` calls `header()` for each SSE header, then streams events via `SseStream::stream()` — each frame is echoed and `ob_flush()` + `flush()` are called immediately so clients receive events as they are produced rather than after the response body is complete.
+SSE framing lives in `ez-php/http` since 2.0 (`EzPhp\Http\Sse\SseEvent`, `StreamedResponse::sse()`). It is an HTTP wire format, and keeping it here would force every module that streams SSE (e.g. `ez-php/ai`) to depend on broadcast. The 1.x `SseStream`/`SseResponse` were removed because their `emit(); exit;` pattern bypassed middleware and `terminate()`.
 
 ---
 
@@ -392,9 +350,7 @@ exit;
 - **`ez-php/contracts` as the only runtime dep** — `BroadcastServiceProvider` uses `ConfigInterface` and `ServiceProvider` from contracts. No dependency on `ez-php/framework`, `ez-php/http`, or `ez-php/events`.
 - **`Broadcast` facade with fail-fast** — Throws `RuntimeException` if called before `setBroadcaster()`. Silent discards are worse than loud failures in development. `NullDriver` (the default) handles intentional silence.
 - **`ArrayDriver` for testing** — Avoids the need for a mock framework. Tests inject a real `ArrayDriver` and read `eventsOn()`. Mocking `BroadcastDriverInterface` would lose the ability to verify ordering and payload structure.
-- **`SseStream::stream()` accepts `\Closure`, not `callable`** — PHPStan level 9 can enforce the callable signature `\Closure(string): void` on a typed `\Closure` parameter. Plain `callable` loses the parameter type.
 - **Redis Pub/Sub driver** — `RedisDriver` uses `ext-redis` and `Redis::publish()` to push events to Pub/Sub channels. Subscribers (SSE proxy, WebSocket gateway) must be running separately; Redis Pub/Sub is fire-and-forget with no persistence. WebSocket support still requires a long-running process (Ratchet, Swoole) which is out of scope.
-- **No SSE retry/reconnection logic** — `SseEvent` supports the `retry` field in the frame format. Actual reconnection handling is client-side (the browser EventSource API handles it automatically).
 - **Test namespace isolation** — Top-level broadcast tests use `namespace Tests`. Driver tests use `namespace Tests\Broadcast\Driver` to avoid collision with `Tests\Driver\LogDriverTest` in `ez-php/mail`. PHPUnit discovers tests by directory scan, so namespace/directory mismatches are allowed.
 - **`BroadcastServiceProvider` 50% method coverage** — Both `register()` and `boot()` are exercised by `BroadcastServiceProviderTest`. The 50% figure is a PCOV attribution artefact: `boot()` calls `Broadcast::setBroadcaster()` which is in another class; the line executing inside `boot()` is attributed to the callee. This is expected and acceptable.
 
@@ -406,7 +362,6 @@ exit;
 - **`BroadcastServiceProviderTest` uses `ApplicationTestCase`** — A full application is bootstrapped to verify the provider binds and wires correctly. The default `getBasePath()` creates a temp dir with an empty `config/` subdirectory; `ConfigInterface::get('broadcast.driver', 'null')` returns `'null'` (the default), so `NullDriver` is selected.
 - **`Broadcast::resetBroadcaster()` in setUp/tearDown** — Required in every test touching the `Broadcast` facade to prevent state leaking across test methods.
 - **`LogDriver` empty-path test** — Uses `ini_set('error_log', $tmpFile)` to redirect `error_log()` output to a temp file for assertion; restores the original value in `finally`.
-- **`SseStream` generator test** — Passes a PHP generator as the iterable to verify `stream()` works with lazy sequences, not just arrays.
 
 ---
 

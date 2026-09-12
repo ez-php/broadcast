@@ -129,81 +129,28 @@ Broadcast::resetBroadcaster();
 
 ## Server-Sent Events (SSE)
 
-`SseEvent` and `SseStream` provide the building blocks for SSE endpoints.
-
-### SseEvent
-
-A single SSE frame (RFC 8895):
+Server-Sent Events are an HTTP wire format and live in `ez-php/http` since 2.0:
+`EzPhp\Http\Sse\SseEvent` and `StreamedResponse::sse()`. Return the response from a
+controller — it travels through middleware (auth, CORS) like any other response:
 
 ```php
-use EzPhp\Broadcast\Sse\SseEvent;
+use EzPhp\Http\Sse\SseEvent;
+use EzPhp\Http\StreamedResponse;
 
-$frame = new SseEvent(
-    data:  json_encode(['id' => 42]),
-    event: 'UserCreated',     // optional event type
-    id:    'msg-1',           // optional ID for reconnection
-    retry: 3000,              // optional reconnect interval (ms)
-);
-
-echo $frame->toString();
-// id: msg-1
-// event: UserCreated
-// retry: 3000
-// data: {"id":42}
-//
-```
-
-Multi-line data is handled automatically — each newline in `$data` produces a separate `data:` line.
-
-### SseResponse
-
-Convenience wrapper that combines `SseStream` with HTTP header output and per-frame flushing:
-
-```php
-use EzPhp\Broadcast\Sse\SseResponse;
-
-$response = new SseResponse($this->generateEvents());
-$response->emit(); // sends headers and streams all events
-exit;
-```
-
-`emit()` calls `header()` for each SSE header, then streams events via `SseStream::stream()` — each frame is echoed and `ob_flush()` + `flush()` are called immediately so clients receive events as they arrive.
-
-### SseStream
-
-Wraps an iterable of `SseEvent` objects and provides the correct HTTP headers:
-
-```php
-use EzPhp\Broadcast\Sse\SseEvent;
-use EzPhp\Broadcast\Sse\SseStream;
-
-// In a controller:
-public function stream(): void
+public function events(Request $request): StreamedResponse
 {
-    $events = $this->generateEvents(); // returns Generator<SseEvent>
-
-    $stream = new SseStream($events);
-
-    foreach ($stream->getHeaders() as $name => $value) {
-        header("$name: $value");
-    }
-
-    $stream->stream(function (string $chunk): void {
-        echo $chunk;
-        ob_flush();
-        flush();
+    // Check authorisation here, before returning — headers are sent before the first event.
+    return StreamedResponse::sse(function (): \Generator {
+        foreach ($this->subscription() as $message) {
+            yield new SseEvent(json_encode($message, JSON_THROW_ON_ERROR), 'message');
+        }
     });
 }
 ```
 
-**Headers set by `getHeaders()`:**
-
-| Header | Value |
-|--------|-------|
-| `Content-Type` | `text/event-stream` |
-| `Cache-Control` | `no-cache` |
-| `Connection` | `keep-alive` |
-| `X-Accel-Buffering` | `no` *(disables nginx buffering)* |
+The 1.x `SseStream` / `SseResponse` classes and the `$response->emit(); exit;` pattern
+were removed: they bypassed middleware and `terminate()`. See
+`ez-php/docs/upgrade-1.x-to-2.0.md`.
 
 ---
 
