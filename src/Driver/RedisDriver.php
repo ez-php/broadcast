@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace EzPhp\Broadcast\Driver;
 
 use EzPhp\Broadcast\BroadcastDriverInterface;
+use EzPhp\Broadcast\BroadcastException;
 use Redis;
 use RuntimeException;
 
@@ -44,11 +45,23 @@ final class RedisDriver implements BroadcastDriverInterface
             );
         }
 
-        $this->redis = new Redis();
-        $this->redis->connect($host, $port);
+        try {
+            $this->redis = new Redis();
+            $this->redis->connect($host, $port);
 
-        if ($database !== 0) {
-            $this->redis->select($database);
+            if ($database !== 0) {
+                $this->redis->select($database);
+            }
+        } catch (\RedisException $e) {
+            // Converts the raw ext-redis exception into a typed, documented
+            // failure. This still fails loudly (broadcast is fire-and-forget,
+            // not silently degraded), but a down Redis host now surfaces as a
+            // predictable BroadcastException instead of an opaque RedisException
+            // propagating out of application bootstrap.
+            throw new BroadcastException(
+                "Failed to connect to Redis at {$host}:{$port}: {$e->getMessage()}",
+                previous: $e,
+            );
         }
     }
 

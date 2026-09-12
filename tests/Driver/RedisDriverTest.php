@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 namespace Tests\Broadcast\Driver;
 
+use EzPhp\Broadcast\BroadcastException;
 use EzPhp\Broadcast\Driver\RedisDriver;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\Group;
+use PHPUnit\Framework\Attributes\UsesClass;
 use RuntimeException;
 use Tests\TestCase;
 
@@ -20,6 +22,7 @@ use Tests\TestCase;
  * @package Tests\Broadcast\Driver
  */
 #[CoversClass(RedisDriver::class)]
+#[UsesClass(BroadcastException::class)]
 #[Group('redis')]
 final class RedisDriverTest extends TestCase
 {
@@ -75,5 +78,19 @@ final class RedisDriverTest extends TestCase
         } else {
             $this->markTestSkipped('ext-redis is loaded; cannot test missing-extension path.');
         }
+    }
+
+    public function testConstructorThrowsBroadcastExceptionWhenRedisUnreachable(): void
+    {
+        if (!extension_loaded('redis')) {
+            $this->markTestSkipped('ext-redis is not available.');
+        }
+
+        // Port 1 is reserved and almost never listening — connection refused immediately,
+        // converted from the raw ext-redis exception into a typed BroadcastException.
+        $this->expectException(BroadcastException::class);
+        $this->expectExceptionMessageMatches('/Failed to connect to Redis/');
+
+        new RedisDriver(host: '127.0.0.1', port: 1);
     }
 }
