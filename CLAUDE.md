@@ -257,19 +257,21 @@ src/
 ├── BroadcastException.php          — base exception for all broadcast-related errors
 ├── BroadcastableInterface.php      — contract: broadcastOn(), broadcastAs(), broadcastWith()
 ├── BroadcastDriverInterface.php    — contract: publish(channel, event, payload): void
-├── Broadcaster.php                 — orchestrates publishing via the injected driver
+├── ChannelAuthorizerInterface.php  — optional contract: authorize(channel): bool, checked by Broadcaster before every publish
+├── Broadcaster.php                 — orchestrates publishing via the injected driver; optional ChannelAuthorizerInterface access check
 ├── Broadcast.php                   — static facade backed by a managed Broadcaster singleton
 ├── BroadcastServiceProvider.php    — binds driver + Broadcaster; wires Broadcast facade in boot()
 └── Driver/
     ├── NullDriver.php              — silent discard (default)
     ├── LogDriver.php               — writes to a log file or error_log() when path is empty
     ├── ArrayDriver.php             — stores events in-memory; designed for testing
-    └── RedisDriver.php             — publishes to Redis Pub/Sub channels via ext-redis
+    ├── RedisDriver.php             — publishes to Redis Pub/Sub channels via ext-redis
+    └── WebSocketDriver.php         — publishes directly to a same-process ez-php/websocket ChannelManager
 
 tests/
 ├── TestCase.php                — base PHPUnit test case
 ├── ApplicationTestCase.php     — thin wrapper around EzPhp\Testing\ApplicationTestCase
-├── BroadcasterTest.php         — covers Broadcaster: event(), to(), driver delegation
+├── BroadcasterTest.php         — covers Broadcaster: event(), to(), driver delegation, ChannelAuthorizerInterface allow/deny
 ├── BroadcastTest.php           — covers Broadcast facade: set, reset, event, to, uninitialized throw
 ├── BroadcastServiceProviderTest.php — covers BroadcastServiceProvider: bindings, default driver, facade wiring
 └── Driver/
@@ -305,9 +307,15 @@ public function publish(string $channel, string $event, array $payload): void;
 
 ---
 
+### ChannelAuthorizerInterface (`src/ChannelAuthorizerInterface.php`)
+
+Single-method contract: `authorize(string $channel): bool`. Optional, constructor-injected into `Broadcaster`; when absent, every channel is allowed (unchanged default behaviour).
+
+---
+
 ### Broadcaster (`src/Broadcaster.php`)
 
-Orchestrates publishing. Accepts either a `BroadcastableInterface` (extracts channel, name, payload automatically) or explicit values via `to()`.
+Orchestrates publishing. Accepts either a `BroadcastableInterface` (extracts channel, name, payload automatically) or explicit values via `to()`. Both `event()` and `to()` funnel through the same authorization check — `event()` delegates to `to()` rather than calling the driver directly, so the check can't be bypassed by one of the two entry points. When a `ChannelAuthorizerInterface` is configured and `authorize($channel)` returns `false`, `to()` throws `BroadcastException` before the driver is ever called.
 
 ---
 
@@ -358,6 +366,14 @@ Publishes events to Redis Pub/Sub channels via the PHP `ext-redis` extension. Th
 
 ---
 
+### WebSocketDriver (`src/Driver/WebSocketDriver.php`)
+
+Publishes events directly to an `ez-php/websocket` `ChannelManager` in the same process — no separate subscriber gateway to run, unlike `RedisDriver`. `publish()` JSON-encodes the same `{'event': <name>, 'payload': <data>}` shape as `RedisDriver` and calls `ChannelManager::broadcast(channel, message)`.
+
+Not wired into `BroadcastServiceProvider`'s config-driven `match` — see Design Decisions.
+
+---
+
 ### LogDriver (`src/Driver/LogDriver.php`)
 
 Writes a one-line summary per event to a file path. The log directory is created on demand. When `logPath` is empty, uses `error_log()`.
@@ -384,6 +400,10 @@ SSE framing lives in `ez-php/http` since 2.0 (`EzPhp\Http\Sse\SseEvent`, `Stream
 - **Redis Pub/Sub driver** — `RedisDriver` uses `ext-redis` and `Redis::publish()` to push events to Pub/Sub channels. Subscribers (SSE proxy, WebSocket gateway) must be running separately; Redis Pub/Sub is fire-and-forget with no persistence. WebSocket support still requires a long-running process (Ratchet, Swoole) which is out of scope.
 - **Test namespace isolation** — Top-level broadcast tests use `namespace Tests`. Driver tests use `namespace Tests\Broadcast\Driver` to avoid collision with `Tests\Driver\LogDriverTest` in `ez-php/mail`. PHPUnit discovers tests by directory scan, so namespace/directory mismatches are allowed.
 - **`BroadcastServiceProvider` 50% method coverage** — Both `register()` and `boot()` are exercised by `BroadcastServiceProviderTest`. The 50% figure is a PCOV attribution artefact: `boot()` calls `Broadcast::setBroadcaster()` which is in another class; the line executing inside `boot()` is attributed to the callee. This is expected and acceptable.
+- **`ChannelAuthorizerInterface` is opt-in and constructor-injected, not config-driven.** No default implementation ships, and no `broadcast.authorizer` config key selects one — this is purely an access-control decision, and the codebase has no established convention for authorization checks that `Broadcaster` could delegate to without inventing one (unlike `RateLimiterInterface`, `CacheInterface`, etc., which already have a driver-selection precedent elsewhere). Applications wire their own implementation directly into the `Broadcaster` constructor.
+- **Denial throws, it does not silently drop.** Unlike `RateLimitedChannel` in `ez-php/notification` (which silently drops on throttle, matching `ThrottleMiddleware`'s "cap the rate, not guarantee delivery" semantics), a denied channel here is a hard authorization failure — the caller almost certainly has a bug (publishing to a channel it has no business touching) and should see it immediately rather than have the event vanish.
+- **`ez-php/websocket` is a require-dev-only (soft) dependency, added solely for `WebSocketDriver`.** PSR-4 resolves that class only when something actually references it, so `src/Driver/WebSocketDriver.php` ships without pulling `ez-php/websocket` into an install that never uses it — the module's "`ez-php/contracts` as the only runtime dep" bullet above stays true (same reasoning as `ez-php/mail`'s `Job\SendMailableJob`).
+- **`WebSocketDriver` is not wired into `BroadcastServiceProvider`'s config-driven `match`, unlike every other driver.** Every other driver is fully constructible from config values alone. `WebSocketDriver` needs the *same* `ChannelManager` instance the running `ez-php/websocket` `Server` uses — same-process delivery only works if broadcaster and server share one instance — and there is no config value that can express "the instance my Server was constructed with." Applications that run both in the same process bind `WebSocketDriver` (wrapping their own `ChannelManager`) directly into the container themselves, the same way `ChannelAuthorizerInterface` above is constructor-injected rather than config-selected.
 
 ---
 
@@ -393,6 +413,7 @@ SSE framing lives in `ez-php/http` since 2.0 (`EzPhp\Http\Sse\SseEvent`, `Stream
 - **`BroadcastServiceProviderTest` uses `ApplicationTestCase`** — A full application is bootstrapped to verify the provider binds and wires correctly. The default `getBasePath()` creates a temp dir with an empty `config/` subdirectory; `ConfigInterface::get('broadcast.driver', 'null')` returns `'null'` (the default), so `NullDriver` is selected.
 - **`Broadcast::resetBroadcaster()` in setUp/tearDown** — Required in every test touching the `Broadcast` facade to prevent state leaking across test methods.
 - **`LogDriver` empty-path test** — Uses `ini_set('error_log', $tmpFile)` to redirect `error_log()` output to a temp file for assertion; restores the original value in `finally`.
+- **`WebSocketDriverTest` uses a real `ChannelManager` with an in-memory fake `ConnectionInterface`** — no socket/network I/O, matching `ArrayDriver`'s "avoid a mock framework" reasoning above. `ChannelManager` is exercised but not `#[UsesClass]`-annotated, since it belongs to `ez-php/websocket`, outside this module's PHPUnit coverage source.
 
 ---
 
@@ -400,10 +421,10 @@ SSE framing lives in `ez-php/http` since 2.0 (`EzPhp\Http\Sse\SseEvent`, `Stream
 
 | Concern | Where it belongs |
 |---------|-----------------|
-| WebSocket support | `ez-php/websocket` (RFC 6455 server on PHP Fibers) or application layer |
+| A WebSocket server itself | `ez-php/websocket` (RFC 6455 server on PHP Fibers) — this module only delivers *into* a running one via `WebSocketDriver` |
 | Persistent message queuing | `ez-php/queue` — Redis Pub/Sub (this module) is fire-and-forget |
 | Domain event dispatching (in-process) | `ez-php/events` |
 | Queue-backed async broadcast | Application layer: push a job that calls `Broadcast::event()` |
-| Channel authentication / presence channels | Application-level middleware or a future `ChannelAuth` addition |
+| Presence channels / member lists | Application layer — `ChannelAuthorizerInterface` is a single allow/deny decision, not a membership registry |
 | HTTP streaming / chunked transfer encoding | Application layer or `ez-php/http` |
 | Client-side EventSource / WebSocket polyfills | Frontend, out of scope |

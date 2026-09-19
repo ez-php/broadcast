@@ -85,6 +85,7 @@ Broadcast::event(new UserCreated(42));
 | Log    | `log`             | Writes a summary to a log file or via `error_log()` |
 | Array  | `array`           | Stores events in memory — designed for testing |
 | Redis  | `redis`           | Publishes to Redis Pub/Sub channels via `ext-redis` |
+| WebSocket | *(manual wiring, not config-driven — see below)* | Publishes directly to a same-process `ez-php/websocket` `ChannelManager` |
 
 ### Log Driver
 
@@ -105,6 +106,26 @@ BROADCAST_REDIS_DATABASE=0
 ```
 
 Publishes events to Redis Pub/Sub channels via PHP's `ext-redis` extension. Subscribers (SSE proxy, WebSocket gateway) must be running separately — Redis Pub/Sub is fire-and-forget.
+
+### WebSocket Driver
+
+For applications running their `ez-php/websocket` server and broadcast producer in the
+same PHP process. Delivery is synchronous and in-memory — no separate subscriber
+gateway to run. Requires `ez-php/websocket` (`require-dev` only on this package; add it
+to your own application's `composer.json`):
+
+```php
+use EzPhp\Broadcast\Broadcaster;
+use EzPhp\Broadcast\Driver\WebSocketDriver;
+use EzPhp\WebSocket\ChannelManager;
+
+$channels = new ChannelManager(); // the same instance your WebSocket handler subscribes connections to
+$broadcaster = new Broadcaster(new WebSocketDriver($channels));
+```
+
+Not config-driven like the other drivers — there is no config value that can express
+"the `ChannelManager` instance my running `Server` was constructed with," so wire it
+into the container yourself rather than setting `BROADCAST_DRIVER=websocket`.
 
 ### Array Driver (for Testing)
 
@@ -166,6 +187,32 @@ were removed: they bypassed middleware and `terminate()`. See
 | `Broadcast::resetBroadcaster()` | Reset to null — call in test `tearDown()` |
 
 Throws `RuntimeException` if called before `setBroadcaster()`.
+
+---
+
+## Channel Authorization
+
+Pass a `ChannelAuthorizerInterface` to `Broadcaster` to gate publishing per channel:
+
+```php
+use EzPhp\Broadcast\Broadcaster;
+use EzPhp\Broadcast\ChannelAuthorizerInterface;
+
+final class TeamChannelAuthorizer implements ChannelAuthorizerInterface
+{
+    public function authorize(string $channel): bool
+    {
+        return str_starts_with($channel, 'team.' . currentUser()->teamId() . '.');
+    }
+}
+
+$broadcaster = new Broadcaster($driver, new TeamChannelAuthorizer());
+$broadcaster->to('team.42.updates', 'TaskCompleted', []); // throws BroadcastException if denied
+```
+
+`event()` and `to()` both go through the same check. With no authorizer (the default), every
+channel is allowed — existing code is unaffected. This is a single allow/deny decision, not a
+presence-channel/member-list system.
 
 ---
 
@@ -256,4 +303,4 @@ const events = new EventSource('/events/feed');
 
 ## Exceptions
 
-`BroadcastException` (extends `RuntimeException`) is the base exception for this package. `Broadcast::event()` / `Broadcast::to()` throw `RuntimeException` if called before the broadcaster is set.
+`BroadcastException` (extends `RuntimeException`) is the base exception for this package. `Broadcast::event()` / `Broadcast::to()` throw `RuntimeException` if called before the broadcaster is set, and `BroadcastException` if a configured `ChannelAuthorizerInterface` denies the channel.

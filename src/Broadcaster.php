@@ -18,10 +18,14 @@ final class Broadcaster
     /**
      * Broadcaster Constructor
      *
-     * @param BroadcastDriverInterface $driver
+     * @param BroadcastDriverInterface        $driver
+     * @param ChannelAuthorizerInterface|null $authorizer Optional access-control hook checked
+     *                                                     before every publish; null allows everything.
      */
-    public function __construct(private readonly BroadcastDriverInterface $driver)
-    {
+    public function __construct(
+        private readonly BroadcastDriverInterface $driver,
+        private readonly ?ChannelAuthorizerInterface $authorizer = null,
+    ) {
     }
 
     /**
@@ -29,15 +33,13 @@ final class Broadcaster
      *
      * @param BroadcastableInterface $event
      *
+     * @throws BroadcastException When a configured authorizer denies the channel.
+     *
      * @return void
      */
     public function event(BroadcastableInterface $event): void
     {
-        $this->driver->publish(
-            $event->broadcastOn(),
-            $event->broadcastAs(),
-            $event->broadcastWith(),
-        );
+        $this->to($event->broadcastOn(), $event->broadcastAs(), $event->broadcastWith());
     }
 
     /**
@@ -47,10 +49,16 @@ final class Broadcaster
      * @param string               $event
      * @param array<string, mixed> $payload
      *
+     * @throws BroadcastException When a configured authorizer denies the channel.
+     *
      * @return void
      */
     public function to(string $channel, string $event, array $payload): void
     {
+        if ($this->authorizer !== null && !$this->authorizer->authorize($channel)) {
+            throw new BroadcastException("Channel '{$channel}' is not authorized for publishing.");
+        }
+
         $this->driver->publish($channel, $event, $payload);
     }
 }
