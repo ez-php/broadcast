@@ -1,6 +1,6 @@
 {
   "name": "ez-php/broadcast",
-  "version": "2.4.4",
+  "version": "2.4.5",
   "description": "Real-time event broadcasting for ez-php — pluggable drivers (Null, Log, Array), SSE response helpers, and a static Broadcast facade",
   "type": "library",
   "license": "MIT",
@@ -19,6 +19,9 @@
   "require": {
     "php": "^8.5",
     "ez-php/contracts": "^2.0"
+  },
+  "suggest": {
+    "ez-php/websocket": "Needed for WebSocketDriver (same-process publishing to a ChannelManager)"
   },
   "require-dev": {
     "ez-php/docker": "^2.0",
