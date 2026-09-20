@@ -26,8 +26,8 @@ Add configuration to `config/broadcast.php`:
 
 ```php
 return [
-    'driver'   => env('BROADCAST_DRIVER', 'null'),
-    'log_path' => env('BROADCAST_LOG_PATH', ''),
+    'driver'   => getenv('BROADCAST_DRIVER') ?: 'null',
+    'log_path' => getenv('BROADCAST_LOG_PATH') ?: '',
 ];
 ```
 
