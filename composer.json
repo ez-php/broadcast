@@ -21,6 +21,7 @@
     "ez-php/contracts": "^2.0"
   },
   "suggest": {
+    "ext-redis": "Needed for Driver\\RedisDriver",
     "ez-php/websocket": "Needed for WebSocketDriver (same-process publishing to a ChannelManager)"
   },
   "require-dev": {
