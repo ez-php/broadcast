@@ -264,7 +264,7 @@ When adding a new module, add `"$ROOT/modules/<name>"` to the `PACKAGES` array i
 
 # Package: ez-php/broadcast
 
-Real-time event broadcasting for ez-php applications — pluggable publish drivers (Null, Log, Array, Redis), a `Broadcast` static facade, and a `BroadcastServiceProvider` for framework integration.
+Real-time event broadcasting for ez-php applications — pluggable publish drivers (Null, Log, Array, Redis, WebSocket), a `Broadcast` static facade, and a `BroadcastServiceProvider` for framework integration.
 
 ---
 
@@ -296,7 +296,8 @@ tests/
     ├── NullDriverTest.php      — covers NullDriver: no exception, no output
     ├── LogDriverTest.php       — covers LogDriver: file write, append, directory creation, error_log fallback
     ├── ArrayDriverTest.php     — covers ArrayDriver: publish, eventsOn, isolation, reset
-    └── RedisDriverTest.php     — covers RedisDriver: publish, multi-channel; requires live Redis (#[Group('redis')]) — module stack `redis` service (host port 6384), CI `redis` service container, or the root stack
+    ├── RedisDriverTest.php     — covers RedisDriver: publish, multi-channel; requires live Redis (#[Group('redis')]) — module stack `redis` service (host port 6384), CI `redis` service container, or the root stack
+    └── WebSocketDriverTest.php — covers WebSocketDriver: publish to a real ChannelManager with an in-memory fake connection
 ```
 
 ---
@@ -415,7 +416,7 @@ SSE framing lives in `ez-php/http` since 2.0 (`EzPhp\Http\Sse\SseEvent`, `Stream
 - **`ez-php/contracts` as the only runtime dep** — `BroadcastServiceProvider` uses `ConfigInterface` and `ServiceProvider` from contracts. No dependency on `ez-php/framework`, `ez-php/http`, or `ez-php/events`.
 - **`Broadcast` facade with fail-fast** — Throws `RuntimeException` if called before `setBroadcaster()`. Silent discards are worse than loud failures in development. `NullDriver` (the default) handles intentional silence.
 - **`ArrayDriver` for testing** — Avoids the need for a mock framework. Tests inject a real `ArrayDriver` and read `eventsOn()`. Mocking `BroadcastDriverInterface` would lose the ability to verify ordering and payload structure.
-- **Redis Pub/Sub driver** — `RedisDriver` uses `ext-redis` and `Redis::publish()` to push events to Pub/Sub channels. Subscribers (SSE proxy, WebSocket gateway) must be running separately; Redis Pub/Sub is fire-and-forget with no persistence. WebSocket support still requires a long-running process (Ratchet, Swoole) which is out of scope.
+- **Redis Pub/Sub driver** — `RedisDriver` uses `ext-redis` and `Redis::publish()` to push events to Pub/Sub channels. Subscribers (SSE proxy, WebSocket gateway) must be running separately; Redis Pub/Sub is fire-and-forget with no persistence. For same-process WebSocket delivery use `WebSocketDriver`, which publishes straight into an `ez-php/websocket` `ChannelManager` (the long-running server process is that module's concern).
 - **Test namespace isolation** — Top-level broadcast tests use `namespace Tests`. Driver tests use `namespace Tests\Broadcast\Driver` to avoid collision with `Tests\Driver\LogDriverTest` in `ez-php/mail`. PHPUnit discovers tests by directory scan, so namespace/directory mismatches are allowed.
 - **`BroadcastServiceProvider` 50% method coverage** — Both `register()` and `boot()` are exercised by `BroadcastServiceProviderTest`. The 50% figure is a PCOV attribution artefact: `boot()` calls `Broadcast::setBroadcaster()` which is in another class; the line executing inside `boot()` is attributed to the callee. This is expected and acceptable.
 - **`ChannelAuthorizerInterface` is opt-in and constructor-injected, not config-driven.** No default implementation ships, and no `broadcast.authorizer` config key selects one — this is purely an access-control decision, and the codebase has no established convention for authorization checks that `Broadcaster` could delegate to without inventing one (unlike `RateLimiterInterface`, `CacheInterface`, etc., which already have a driver-selection precedent elsewhere). Applications wire their own implementation directly into the `Broadcaster` constructor.
@@ -427,7 +428,7 @@ SSE framing lives in `ez-php/http` since 2.0 (`EzPhp\Http\Sse\SseEvent`, `Stream
 
 ## Testing Approach
 
-- **No external infrastructure** — All tests run in-process. No MySQL, Redis, or network required.
+- **No external infrastructure except for `RedisDriverTest`** — every other test runs in-process with no MySQL, Redis or network. `RedisDriverTest` needs a live Redis (`#[Group('redis')]`, see the tree above).
 - **`BroadcastServiceProviderTest` uses `ApplicationTestCase`** — A full application is bootstrapped to verify the provider binds and wires correctly. The default `getBasePath()` creates a temp dir with an empty `config/` subdirectory; `ConfigInterface::get('broadcast.driver', 'null')` returns `'null'` (the default), so `NullDriver` is selected.
 - **`Broadcast::resetBroadcaster()` in setUp/tearDown** — Required in every test touching the `Broadcast` facade to prevent state leaking across test methods.
 - **`LogDriver` empty-path test** — Uses `ini_set('error_log', $tmpFile)` to redirect `error_log()` output to a temp file for assertion; restores the original value in `finally`.

@@ -102,7 +102,7 @@ When `BROADCAST_LOG_PATH` is empty, events are written via `error_log()`.
 BROADCAST_DRIVER=redis
 BROADCAST_REDIS_HOST=redis
 BROADCAST_REDIS_PORT=6379
-BROADCAST_REDIS_DATABASE=0
+BROADCAST_REDIS_DB=0
 ```
 
 Publishes events to Redis Pub/Sub channels via PHP's `ext-redis` extension. Subscribers (SSE proxy, WebSocket gateway) must be running separately — Redis Pub/Sub is fire-and-forget.
