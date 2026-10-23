@@ -35,6 +35,33 @@ final class BroadcastProviderDriversTest extends ApplicationTestCase
 {
     private string $logFile = '';
 
+    /**
+     * The provider builds the Redis driver while booting, so an unreachable server has to
+     * skip the test before parent::setUp() bootstraps the application — inside the test
+     * body it would already be an error.
+     */
+    protected function setUp(): void
+    {
+        if ($this->name() === 'test_redis_driver_is_built_from_config' && !self::redisAvailable()) {
+            self::markTestSkipped('ext-redis is missing or no Redis answers at REDIS_HOST/REDIS_PORT.');
+        }
+
+        parent::setUp();
+    }
+
+    private static function redisAvailable(): bool
+    {
+        if (!extension_loaded('redis')) {
+            return false;
+        }
+
+        try {
+            return (new Redis())->connect(self::redisHost(), self::redisPort(), 1.0);
+        } catch (RedisException) {
+            return false;
+        }
+    }
+
     protected function getBasePath(): string
     {
         $path = parent::getBasePath();
@@ -79,18 +106,6 @@ final class BroadcastProviderDriversTest extends ApplicationTestCase
 
     public function test_redis_driver_is_built_from_config(): void
     {
-        if (!extension_loaded('redis')) {
-            self::markTestSkipped('ext-redis is not available.');
-        }
-
-        try {
-            if (!(new Redis())->connect(self::redisHost(), self::redisPort(), 1.0)) {
-                self::markTestSkipped('Redis is not available.');
-            }
-        } catch (RedisException) {
-            self::markTestSkipped('Redis is not available.');
-        }
-
         $driver = $this->app()->make(BroadcastDriverInterface::class);
 
         self::assertInstanceOf(RedisDriver::class, $driver);
