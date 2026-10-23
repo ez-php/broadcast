@@ -289,6 +289,7 @@ src/
 
 tests/
 ├── TestCase.php                — base PHPUnit test case
+├── BroadcastProviderDriversTest.php  — The `log` (with `broadcast.log_path`) and `redis` branches of BroadcastServiceProvider's driver match
 ├── ApplicationTestCase.php     — thin wrapper around EzPhp\Testing\ApplicationTestCase
 ├── BroadcasterTest.php         — covers Broadcaster: event(), to(), driver delegation, ChannelAuthorizerInterface allow/deny
 ├── BroadcastTest.php           — covers Broadcast facade: set, reset, event, to, uninitialized throw
