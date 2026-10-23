@@ -59,6 +59,15 @@ final class WebSocketDriverTest extends TestCase
             {
             }
 
+            public function closeWith(int $code, ?string $reason = null): void
+            {
+            }
+
+            public function subprotocol(): ?string
+            {
+                return null;
+            }
+
             /**
              * @return array<string, string>
              */
